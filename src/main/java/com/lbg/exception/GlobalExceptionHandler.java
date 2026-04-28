@@ -1,121 +1,93 @@
 package com.lbg.exception;
 
-import com.lbg.dto.response.ApiErrorResponse;
 import jakarta.servlet.http.HttpServletRequest;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
-import java.time.LocalDateTime;
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.time.Instant;
+import java.util.List;
 
-@Slf4j
 @RestControllerAdvice
+@Slf4j
 public class GlobalExceptionHandler {
 
-    // ── 404 Not Found ────────────────────────────────────────────────────────
-    @ExceptionHandler(CaseNotFoundException.class)
-    public ResponseEntity<ApiErrorResponse> handleCaseNotFound(
-            CaseNotFoundException ex, HttpServletRequest request) {
-
-        log.warn("Case not found: {}", ex.getMessage());
-        return build(HttpStatus.NOT_FOUND, "Not Found", ex.getMessage(), request, null);
-    }
-
-    // ── 409 Conflict ─────────────────────────────────────────────────────────
-    @ExceptionHandler(DuplicateCaseException.class)
-    public ResponseEntity<ApiErrorResponse> handleDuplicateCase(
-            DuplicateCaseException ex, HttpServletRequest request) {
-
-        log.warn("Duplicate case: {}", ex.getMessage());
-        return build(HttpStatus.CONFLICT, "Conflict", ex.getMessage(), request, null);
-    }
-
-    // ── 422 Unprocessable Entity — stage skipping ─────────────────────────────
-    @ExceptionHandler(InvalidStatusTransitionException.class)
-    public ResponseEntity<ApiErrorResponse> handleInvalidTransition(
-            InvalidStatusTransitionException ex, HttpServletRequest request) {
-
-        log.warn("Invalid status transition: {}", ex.getMessage());
-        return build(HttpStatus.UNPROCESSABLE_ENTITY, "Unprocessable Entity", ex.getMessage(), request, null);
-    }
-
-    // ── 422 Unprocessable Entity — SAR from wrong status ─────────────────────
-    @ExceptionHandler(SarNotAllowedException.class)
-    public ResponseEntity<ApiErrorResponse> handleSarNotAllowed(
-            SarNotAllowedException ex, HttpServletRequest request) {
-
-        log.warn("SAR not allowed: {}", ex.getMessage());
-        return build(HttpStatus.UNPROCESSABLE_ENTITY, "Unprocessable Entity", ex.getMessage(), request, null);
-    }
-
-    // ── 400 Bad Request — Bean Validation failures ────────────────────────────
+    // ── 400 Bean Validation ───────────────────────────────────
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<ApiErrorResponse> handleValidationErrors(
-            MethodArgumentNotValidException ex, HttpServletRequest request) {
+    public ResponseEntity<ErrorResponse> handleValidation(
+            MethodArgumentNotValidException ex, HttpServletRequest req) {
 
-        Map<String, String> fieldErrors = new LinkedHashMap<>();
-        ex.getBindingResult().getFieldErrors()
-                .forEach(fe -> fieldErrors.put(fe.getField(), fe.getDefaultMessage()));
+        List<Violation> violations = ex.getBindingResult().getFieldErrors().stream()
+                .map(fe -> new Violation(fe.getField(),
+                        fe.getDefaultMessage() != null ? fe.getDefaultMessage() : "Invalid"))
+                .toList();
 
-        log.warn("Validation failed: {}", fieldErrors);
-        return build(HttpStatus.BAD_REQUEST, "Bad Request",
-                "Request validation failed. See 'fieldErrors' for details.", request, fieldErrors);
+        log.warn("Validation failed [{}]: {}", req.getRequestURI(), violations);
+        return ResponseEntity.badRequest()
+                .body(ErrorResponse.of(400, "Validation failed", req.getRequestURI(), violations));
     }
 
-    // ── 400 Bad Request — Malformed JSON / unreadable body ───────────────────
-    @ExceptionHandler(HttpMessageNotReadableException.class)
-    public ResponseEntity<ApiErrorResponse> handleNotReadable(
-            HttpMessageNotReadableException ex, HttpServletRequest request) {
-
-        log.warn("Unreadable HTTP message: {}", ex.getMessage());
-        return build(HttpStatus.BAD_REQUEST, "Bad Request",
-                "Malformed JSON or unrecognised enum value in request body.", request, null);
+    // ── 400 Bad query param ───────────────────────────────────
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ErrorResponse> handleBadArg(
+            IllegalArgumentException ex, HttpServletRequest req) {
+        log.warn("Bad request [{}]: {}", req.getRequestURI(), ex.getMessage());
+        return ResponseEntity.badRequest()
+                .body(ErrorResponse.of(400, ex.getMessage(), req.getRequestURI(), List.of()));
     }
 
-    // ── 400 Bad Request — Path variable / query param type mismatch ──────────
-    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
-    public ResponseEntity<ApiErrorResponse> handleTypeMismatch(
-            MethodArgumentTypeMismatchException ex, HttpServletRequest request) {
-
-        String msg = String.format("Invalid value '%s' for parameter '%s'.", ex.getValue(), ex.getName());
-        log.warn("Type mismatch: {}", msg);
-        return build(HttpStatus.BAD_REQUEST, "Bad Request", msg, request, null);
+    // ── 404 Not found ─────────────────────────────────────────
+    @ExceptionHandler(ResourceNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleNotFound(
+            ResourceNotFoundException ex, HttpServletRequest req) {
+        log.warn("Not found [{}]: {}", req.getRequestURI(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ErrorResponse.of(404, ex.getMessage(), req.getRequestURI(), List.of()));
     }
 
-    // ── 500 Internal Server Error — catch-all ────────────────────────────────
+    // ── 422 Business rule ─────────────────────────────────────
+    @ExceptionHandler(BusinessRuleException.class)
+    public ResponseEntity<ErrorResponse> handleBusinessRule(
+            BusinessRuleException ex, HttpServletRequest req) {
+        log.warn("Business rule violation [{}]: {}", req.getRequestURI(), ex.getMessage());
+        return ResponseEntity.unprocessableEntity()
+                .body(ErrorResponse.of(422, ex.getMessage(), req.getRequestURI(), List.of()));
+    }
+
+    // ── 500 Catch-all ─────────────────────────────────────────
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ApiErrorResponse> handleGeneric(
-            Exception ex, HttpServletRequest request) {
-
-        log.error("Unexpected error at {}: {}", request.getRequestURI(), ex.getMessage(), ex);
-        return build(HttpStatus.INTERNAL_SERVER_ERROR, "Internal Server Error",
-                "An unexpected error occurred. Please contact support.", request, null);
+    public ResponseEntity<ErrorResponse> handleGeneric(Exception ex, HttpServletRequest req) {
+        log.error("Unhandled exception [{}]", req.getRequestURI(), ex);
+        return ResponseEntity.internalServerError()
+                .body(ErrorResponse.of(500, "An unexpected error occurred",
+                        req.getRequestURI(), List.of()));
     }
 
-    // ── Helper ────────────────────────────────────────────────────────────────
-    private ResponseEntity<ApiErrorResponse> build(
-            HttpStatus status,
-            String error,
-            String message,
-            HttpServletRequest request,
-            Map<String, String> fieldErrors) {
+    // ── Response body ─────────────────────────────────────────
+    @Getter
+    @AllArgsConstructor
+    public static class ErrorResponse {
+        private Instant timestamp;
+        private int status;
+        private String error;
+        private String path;
+        private List<Violation> violations;
 
-        ApiErrorResponse body = ApiErrorResponse.builder()
-                .timestamp(LocalDateTime.now())
-                .status(status.value())
-                .error(error)
-                .message(message)
-                .path(request.getRequestURI())
-                .fieldErrors(fieldErrors)
-                .build();
+        static ErrorResponse of(int status, String error,
+                                String path, List<Violation> violations) {
+            return new ErrorResponse(Instant.now(), status, error, path, violations);
+        }
+    }
 
-        return ResponseEntity.status(status).body(body);
+    @Getter
+    @AllArgsConstructor
+    public static class Violation {
+        private String field;
+        private String message;
     }
 }

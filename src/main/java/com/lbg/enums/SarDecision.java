@@ -1,6 +1,5 @@
 package com.lbg.enums;
 
 public enum SarDecision {
-    FILE,
-    NO_ACTION
+    FILE, NO_ACTION
 }

@@ -1,19 +1,16 @@
 package com.lbg.repository;
 
-import com.lbg.entity.CaseEntity;
-import com.lbg.enums.CasePriority;
-import com.lbg.enums.CaseStatus;
+import com.lbg.entity.InvestigationCase;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.stereotype.Repository;
 
-import java.util.List;
+import java.util.Optional;
 
 @Repository
-public interface CaseRepository extends JpaRepository<CaseEntity, String> {
+public interface CaseRepository extends JpaRepository<InvestigationCase, Long>,
+        JpaSpecificationExecutor<InvestigationCase> {
+    Optional<InvestigationCase> findByCaseRef(String caseRef);
 
-    List<CaseEntity> findByStatus(CaseStatus status);
-
-    List<CaseEntity> findByPriority(CasePriority priority);
-
-    List<CaseEntity> findByStatusAndPriority(CaseStatus status, CasePriority priority);
+    boolean existsByCaseRef(String caseRef);
 }

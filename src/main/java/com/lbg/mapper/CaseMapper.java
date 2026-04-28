@@ -1,77 +1,97 @@
 package com.lbg.mapper;
 
-import com.lbg.dto.response.AuditLogResponse;
-import com.lbg.dto.response.CaseDetailResponse;
-import com.lbg.dto.response.CaseSummaryResponse;
-import com.lbg.dto.response.NoteResponse;
-import com.lbg.entity.CaseAuditLogEntity;
-import com.lbg.entity.CaseEntity;
-import com.lbg.entity.CaseLinkedAlertEntity;
-import com.lbg.entity.CaseNoteEntity;
+import com.lbg.dto.request.CaseRequestDTO;
+import com.lbg.dto.response.AuditLogResponseDTO;
+import com.lbg.dto.response.CaseDetailDTO;
+import com.lbg.dto.response.CaseSummaryDTO;
+import com.lbg.dto.response.NoteResponseDTO;
+import com.lbg.entity.CaseAuditLog;
+import com.lbg.entity.CaseLinkedAlert;
+import com.lbg.entity.InvestigationCase;
+import com.lbg.enums.AuditEventType;
+import com.lbg.enums.CasePriority;
+import com.lbg.enums.CaseStatus;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.List;
 
 @Component
 public class CaseMapper {
 
-    public CaseSummaryResponse toSummary(CaseEntity entity) {
-        return CaseSummaryResponse.builder()
-                .caseId(entity.getCaseId())
-                .customerId(entity.getCustomerId())
-                .priority(entity.getPriority())
-                .status(entity.getStatus())
-                .assignedAnalyst(entity.getAssignedAnalyst())
-                .openedAt(entity.getOpenedAt())
-                .sarDecision(entity.getSarDecision())
-                .linkedAlertCount(entity.getLinkedAlerts().size())
+    public CaseSummaryDTO toSummaryDTO(InvestigationCase c) {
+        return CaseSummaryDTO.builder()
+                .caseId(c.getCaseRef())
+                .customerId(c.getCustomerId())
+                .status(c.getStatus().name())
+                .priority(c.getPriority().name())
+                .assignedAnalyst(c.getAssignedAnalyst())
+                .openedAt(c.getOpenedAt())
+                .alertCount(c.getLinkedAlerts().size())
                 .build();
     }
 
-    public CaseDetailResponse toDetail(CaseEntity entity) {
-        List<String> alertIds = entity.getLinkedAlerts().stream()
-                .map(CaseLinkedAlertEntity::getAlertId)
+    public CaseDetailDTO toDetailDTO(InvestigationCase c) {
+        List<String> alertRefs = c.getLinkedAlerts().stream()
+                .map(CaseLinkedAlert::getAlertRef).toList();
+
+        List<NoteResponseDTO> notes = c.getNotes().stream()
+                .map(n -> NoteResponseDTO.builder()
+                        .id(n.getId()).author(n.getAuthor())
+                        .text(n.getNoteText()).createdAt(n.getCreatedAt())
+                        .build())
                 .toList();
 
-        List<NoteResponse> notes = entity.getNotes().stream()
-                .map(this::toNoteResponse)
+        List<AuditLogResponseDTO> auditLog = c.getAuditLog().stream()
+                .map(a -> AuditLogResponseDTO.builder()
+                        .eventType(a.getEventType().name())
+                        .analyst(a.getAnalyst())
+                        .detail(a.getDetail())
+                        .changedAt(a.getChangedAt())
+                        .build())
                 .toList();
 
-        List<AuditLogResponse> auditLog = entity.getAuditLog().stream()
-                .map(this::toAuditResponse)
-                .toList();
-
-        return CaseDetailResponse.builder()
-                .caseId(entity.getCaseId())
-                .customerId(entity.getCustomerId())
-                .priority(entity.getPriority())
-                .status(entity.getStatus())
-                .assignedAnalyst(entity.getAssignedAnalyst())
-                .openedAt(entity.getOpenedAt())
-                .sarDecision(entity.getSarDecision())
-                .sarRationale(entity.getSarRationale())
-                .linkedAlertIds(alertIds)
+        return CaseDetailDTO.builder()
+                .caseId(c.getCaseRef())
+                .customerId(c.getCustomerId())
+                .status(c.getStatus().name())
+                .priority(c.getPriority().name())
+                .assignedAnalyst(c.getAssignedAnalyst())
+                .sarDecision(c.getSarDecision() != null ? c.getSarDecision().name() : null)
+                .sarRationale(c.getSarRationale())
+                .openedAt(c.getOpenedAt())
+                .resolvedAt(c.getResolvedAt())
+                .linkedAlertIds(alertRefs)
                 .notes(notes)
                 .auditLog(auditLog)
                 .build();
     }
 
-    public NoteResponse toNoteResponse(CaseNoteEntity entity) {
-        return NoteResponse.builder()
-                .id(entity.getId())
-                .author(entity.getAuthor())
-                .noteTimestamp(entity.getNoteTimestamp())
-                .noteText(entity.getNoteText())
+    public InvestigationCase toEntity(CaseRequestDTO dto, String caseRef) {
+        InvestigationCase c = InvestigationCase.builder()
+                .caseRef(caseRef)
+                .customerId(dto.getCustomerId())
+                .priority(CasePriority.valueOf(dto.getPriority()))
+                .status(CaseStatus.OPEN)
+                .assignedAnalyst(dto.getAssignedAnalyst())
+                .openedAt(Instant.now())
                 .build();
-    }
 
-    public AuditLogResponse toAuditResponse(CaseAuditLogEntity entity) {
-        return AuditLogResponse.builder()
-                .id(entity.getId())
-                .eventType(entity.getEventType())
-                .eventTimestamp(entity.getEventTimestamp())
-                .analyst(entity.getAnalyst())
-                .detail(entity.getDetail())
-                .build();
+        // Link alerts
+        dto.getLinkedAlertIds().stream()
+                .map(ref -> CaseLinkedAlert.builder()
+                        .investigationCase(c).alertRef(ref).build())
+                .forEach(c.getLinkedAlerts()::add);
+
+        // Opening audit entry
+        c.getAuditLog().add(CaseAuditLog.builder()
+                .investigationCase(c)
+                .eventType(AuditEventType.CASE_OPENED)
+                .analyst(dto.getAssignedAnalyst())
+                .detail("Case opened and linked to alert(s): " +
+                        String.join(", ", dto.getLinkedAlertIds()))
+                .build());
+
+        return c;
     }
 }
